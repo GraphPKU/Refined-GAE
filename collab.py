@@ -12,18 +12,17 @@ from torch.utils.data import DataLoader
 import tqdm
 import argparse
 from loss import auc_loss, hinge_auc_loss, log_rank_loss
-from model import GCN_with_feature_2, Hadamard_MLPPredictor, GCN_with_feature, Dot_Predictor
+from model import Hadamard_MLPPredictor, GCN_with_feature, DotPredictor
 import time
 
 def parse():
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", default='ogbl-collab', choices=['ogbl-collab', 'ogbl-citation2'], type=str)
+    parser.add_argument("--dataset", default='ogbl-collab', choices=['ogbl-collab'], type=str)
     parser.add_argument("--lr", default=0.01, type=float)
     parser.add_argument("--prop_step", default=8, type=int)
     parser.add_argument("--emb_hidden", default=64, type=int)
-    parser.add_argument("--gnn_hidden", default=64, type=int)
-    parser.add_argument("--mlp_hidden", default=64, type=int)
+    parser.add_argument("--hidden", default=64, type=int)
     parser.add_argument("--batch_size", default=8192, type=int)
     parser.add_argument("--dropout", default=0.05, type=float)
     parser.add_argument("--num_neg", default=1, type=int)
@@ -129,19 +128,11 @@ def test(model, g, pos_test_edge, neg_test_edge, evaluator, pred):
             neg_pred = pred(h[neg_edge[:, 0]], h[neg_edge[:, 1]])
             neg_score.append(neg_pred)
         neg_score = torch.cat(neg_score, dim=0)
-        if args.dataset == 'ogbl-citation2':
-            neg_score = neg_score.view(-1, 1000)
-            results = {}
-            results[args.metric] = evaluator.eval({
-                'y_pred_pos': pos_score,
-                'y_pred_neg': neg_score,
-            })['mrr_list'].mean().item()
-        else:
-            results = {}
-            results[args.metric] = evaluator.eval({
-                'y_pred_pos': pos_score,
-                'y_pred_neg': neg_score,
-            })[args.metric]
+        results = {}
+        results[args.metric] = evaluator.eval({
+            'y_pred_pos': pos_score,
+            'y_pred_neg': neg_score,
+        })[args.metric]
     return results
 
 def eval(model, g, pos_valid_edge, neg_valid_edge, evaluator, pred):
@@ -164,19 +155,11 @@ def eval(model, g, pos_valid_edge, neg_valid_edge, evaluator, pred):
             neg_pred = pred(h[neg_edge[:, 0]], h[neg_edge[:, 1]])
             neg_score.append(neg_pred)
         neg_score = torch.cat(neg_score, dim=0)
-        if args.dataset == 'ogbl-citation2':
-            neg_score = neg_score.view(-1, 1000)
-            results = {}
-            results[args.metric] = evaluator.eval({
-                'y_pred_pos': pos_score,
-                'y_pred_neg': neg_score,
-            })['mrr_list'].mean().item()
-        else:
-            results = {}
-            results[args.metric] = evaluator.eval({
-                'y_pred_pos': pos_score,
-                'y_pred_neg': neg_score,
-            })[args.metric]
+        results = {}
+        results[args.metric] = evaluator.eval({
+            'y_pred_pos': pos_score,
+            'y_pred_neg': neg_score,
+        })[args.metric]
     return results
 
 # Load the dataset
@@ -210,19 +193,8 @@ if args.dataset == 'ogbl-collab':
     graph.edata['weight'] = train_edge_weight.to(torch.float32)
     split_edge['train']['edge'] = torch.cat((split_edge['train']['edge'], split_edge['valid']['edge']), dim=0)
     
-
 graph = dgl.add_self_loop(graph, fill_data=0)
 graph = graph.to(device)
-
-if args.dataset =="ogbl-citation2":
-    for name in ['train','valid','test']:
-        u=split_edge[name]["source_node"]
-        v=split_edge[name]["target_node"]
-        split_edge[name]['edge']=torch.stack((u,v),dim=0).t()
-    for name in ['valid','test']:
-        u=split_edge[name]["source_node"].repeat(1, 1000).view(-1)
-        v=split_edge[name]["target_node_neg"].view(-1)
-        split_edge[name]['edge_neg']=torch.stack((u,v),dim=0).t()   
 
 train_pos_edge = split_edge['train']['edge'].to(device)
 valid_pos_edge = split_edge['valid']['edge'].to(device)
@@ -240,11 +212,11 @@ neg_sampler = GlobalUniform(args.num_neg)
 if args.pred == 'dot':
     pred = Dot_Predictor().to(device)
 elif args.pred == 'mlp':
-    pred = Hadamard_MLPPredictor(args.gnn_hidden, args.mlp_hidden, args.dropout, args.mlp_layers, args.res).to(device)
+    pred = Hadamard_MLPPredictor(args.hidden, args.dropout, args.mlp_layers, args.res).to(device)
 else:
     raise NotImplementedError
 
-model = GCN_with_feature(graph.ndata['feat'].shape[1], args.gnn_hidden, args.prop_step, args.dropout, args.residual, args.relu, args.conv).to(device)
+model = GCN_with_feature(graph.ndata['feat'].shape[1], args.hidden, args.prop_step, args.dropout, args.residual, args.relu, args.conv).to(device)
 
 parameter = itertools.chain(model.parameters(), pred.parameters(), embedding.parameters())
 optimizer = torch.optim.Adam(parameter, lr=args.lr)
