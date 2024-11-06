@@ -1,4 +1,4 @@
-This repository contains the code for the paper "Reconsidering the performance of GCN in link prediction" by Weishuo Ma, Yanbo Wang, XiYuan Wang and Muhan Zhang.
+This repository contains the code for the paper "Reconsidering the performance of GAE in link prediction" by Weishuo Ma, Yanbo Wang, XiYuan Wang and Muhan Zhang.
 
 The code is based on the DGL library and the OGB library. To run the code, you need to set up the environment specified in the env.yaml file.
 
@@ -13,6 +13,5 @@ Below we give the commands to run the code on the four datasets in the OGB bench
 
 ```python train_w_feat.py --dataset ogbl-citation2 --lr 0.003 --emb_hidden 128 --gnn_hidden 128 --mlp_hidden 128 --batch_size 131072 --dropout 0 --num_neg 6 --epochs 200 --prop_step 3 --metric MRR```
 
-To run this model, please set the environment as specified in the env.yaml file.
 
 For ogbl-citation2 dataset, you need a GPU with at least 40GB memory.
