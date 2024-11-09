@@ -238,7 +238,7 @@ for epoch in range(args.epochs):
     test_results = test(model, graph_t, test_pos_edge, test_neg_edge, evaluator, pred)
     test_list.append(test_results[args.metric])
     if valid_results[args.metric] > best_val:
-        if args.dataset == 'ogbl-ddi' and epoch > 300:
+        if args.dataset == 'ogbl-ddi' and epoch > 400:
             best_val = valid_results[args.metric]
             best_epoch = epoch
             final_test_result = test_results
