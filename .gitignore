@@ -1,3 +1,5 @@
 result/
 dataset/
 __pycache__/
+test/
+wandb/

@@ -12,8 +12,9 @@ from torch.utils.data import DataLoader
 import tqdm
 import argparse
 from loss import auc_loss, hinge_auc_loss, log_rank_loss
-from model import Hadamard_MLPPredictor, GCN_with_feature, DotPredictor
+from model import Hadamard_MLPPredictor, GCN_with_feature, DotPredictor, LightGCN
 import time
+import wandb
 
 def parse():
     
@@ -33,7 +34,7 @@ def parse():
     parser.add_argument("--gpu", default=0, type=int)
     parser.add_argument("--relu", action='store_true', default=False)
     parser.add_argument("--seed", default=0, type=int)
-    parser.add_argument("--model", default='GCN', choices=['GCN', 'GCN_with_MLP', 'GCN_no_para'], type=str)
+    parser.add_argument("--model", default='GCN', choices=['GCN', 'GCN_with_MLP', 'GCN_no_para', 'LightGCN'], type=str)
     parser.add_argument("--maskinput", action='store_true', default=False)
     parser.add_argument("--norm", action='store_true', default=False)
     parser.add_argument("--dp4norm", default=0, type=float)
@@ -45,23 +46,45 @@ def parse():
     parser.add_argument("--pred", default='mlp', type=str)
     parser.add_argument("--res", action='store_true', default=False)
     parser.add_argument("--conv", default='GCN', type=str)
+    parser.add_argument('--alpha', default=0.5, type=float)
+    parser.add_argument('--exp', action='store_true', default=False)
+    parser.add_argument('--scale', action='store_true', default=False)
+    parser.add_argument('--linear', action='store_true', default=False)
+    parser.add_argument('--clip_norm', default=1.0, type=float)
 
     args = parser.parse_args()
     return args
 
 args = parse()
 print(args)
-
+wandb.init(project='Refined-GAE', config=args)
 torch.manual_seed(args.seed)
 torch.cuda.manual_seed_all(args.seed)
 dgl.seed(args.seed)
+
+def eval_hits(y_pred_pos, y_pred_neg, K):
+    '''
+        compute Hits@K
+        For each positive target node, the negative target nodes are the same.
+
+        y_pred_neg is an array.
+        rank y_pred_pos[i] against y_pred_neg for each i
+    '''
+
+    if len(y_pred_neg) < K:
+        return {'hits@{}'.format(K): 1.}
+
+    kth_score_in_negative_edges = torch.topk(y_pred_neg, K)[0][-1]
+    hitsK = float(torch.sum(y_pred_pos > kth_score_in_negative_edges).cpu()) / len(y_pred_pos)
+
+    return {'hits@{}'.format(K): hitsK}
 
 def adjustlr(optimizer, decay_ratio, lr):
     lr_ = lr * max(1 - decay_ratio, 0.0001)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr_
 
-def train(model, g, train_pos_edge, optimizer, neg_sampler, pred):
+def train(model, g, train_pos_edge, optimizer, neg_sampler, pred, emb=None):
     model.train()
     pred.train()
 
@@ -70,6 +93,7 @@ def train(model, g, train_pos_edge, optimizer, neg_sampler, pred):
     if args.maskinput:
         mask = torch.ones(train_pos_edge.size(0), dtype=torch.bool)
     for _, edge_index in enumerate(tqdm.tqdm(dataloader)):
+        xemb = torch.cat((g.ndata['feat'], emb.weight), dim=1) if emb is not None else g.ndata['feat']
         if args.maskinput:
             mask[edge_index] = 0
             tei = train_pos_edge[mask]
@@ -78,10 +102,10 @@ def train(model, g, train_pos_edge, optimizer, neg_sampler, pred):
             tei = torch.cat((tei, re_tei), dim=0)
             g_mask = dgl.graph((tei[:, 0], tei[:, 1]), num_nodes=g.num_nodes())
             g_mask = dgl.add_self_loop(g_mask)
-            h = model(g_mask, g.ndata['feat'])
+            h = model(g_mask, xemb)
             mask[edge_index] = 1
         else:
-            h = model(g, g.ndata['feat'])
+            h = model(g, xemb)
 
         pos_edge = train_pos_edge[edge_index]
         neg_train_edge = neg_sampler(g, pos_edge.t()[0])
@@ -101,19 +125,22 @@ def train(model, g, train_pos_edge, optimizer, neg_sampler, pred):
         
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        torch.nn.utils.clip_grad_norm_(pred.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
+        torch.nn.utils.clip_grad_norm_(pred.parameters(), args.clip_norm)
+        if emb is not None:
+            torch.nn.utils.clip_grad_norm_(emb.parameters(), args.clip_norm)
         optimizer.step()
         total_loss += loss.item()
 
     return total_loss / len(dataloader)
 
-def test(model, g, pos_test_edge, neg_test_edge, evaluator, pred):
+def test(model, g, pos_test_edge, neg_test_edge, evaluator, pred, emb=None):
     model.eval()
     pred.eval()
 
     with torch.no_grad():
-        h = model(g, g.ndata['feat'])
+        xemb = torch.cat((g.ndata['feat'], emb.weight), dim=1) if emb is not None else g.ndata['feat']
+        h = model(g, xemb)
         dataloader = DataLoader(range(pos_test_edge.size(0)), args.batch_size)
         pos_score = []
         for _, edge_index in enumerate(tqdm.tqdm(dataloader)):
@@ -128,27 +155,23 @@ def test(model, g, pos_test_edge, neg_test_edge, evaluator, pred):
             neg_pred = pred(h[neg_edge[:, 0]], h[neg_edge[:, 1]])
             neg_score.append(neg_pred)
         neg_score = torch.cat(neg_score, dim=0)
-        if args.dataset == 'ogbl-citation2':
-            neg_score = neg_score.view(-1, 1000)
-            results = {}
-            results[args.metric] = evaluator.eval({
-                'y_pred_pos': pos_score,
-                'y_pred_neg': neg_score,
-            })['mrr_list'].mean().item()
-        else:
-            results = {}
-            results[args.metric] = evaluator.eval({
-                'y_pred_pos': pos_score,
-                'y_pred_neg': neg_score,
-            })[args.metric]
+        neg_score_multi = neg_score.view(-1, 1000)
+        results = {}
+        for k in [20, 50, 100]:
+            results[f'hits@{k}'] = eval_hits(pos_score, neg_score, k)[f'hits@{k}']
+        results[args.metric] = evaluator.eval({
+            'y_pred_pos': pos_score,
+            'y_pred_neg': neg_score_multi,
+        })['mrr_list'].mean().item()
     return results
 
-def eval(model, g, pos_valid_edge, neg_valid_edge, evaluator, pred):
+def eval(model, g, pos_train_edge, pos_valid_edge, neg_valid_edge, evaluator, pred, emb=None):
     model.eval()
     pred.eval()
 
     with torch.no_grad():
-        h = model(g, g.ndata['feat'])
+        xemb = torch.cat((g.ndata['feat'], emb.weight), dim=1) if emb is not None else g.ndata['feat']
+        h = model(g, xemb)
         dataloader = DataLoader(range(pos_valid_edge.size(0)), args.batch_size)
         pos_score = []
         for _, edge_index in enumerate(tqdm.tqdm(dataloader)):
@@ -163,13 +186,30 @@ def eval(model, g, pos_valid_edge, neg_valid_edge, evaluator, pred):
             neg_pred = pred(h[neg_edge[:, 0]], h[neg_edge[:, 1]])
             neg_score.append(neg_pred)
         neg_score = torch.cat(neg_score, dim=0)
-        neg_score = neg_score.view(-1, 1000)
-        results = {}
-        results[args.metric] = evaluator.eval({
+        neg_score_multi = neg_score.view(-1, 1000)
+        valid_results = {}
+        for k in [20, 50, 100]:
+            valid_results[f'hits@{k}'] = eval_hits(pos_score, neg_score, k)[f'hits@{k}']
+        valid_results[args.metric] = evaluator.eval({
             'y_pred_pos': pos_score,
-            'y_pred_neg': neg_score,
+            'y_pred_neg': neg_score_multi,
         })['mrr_list'].mean().item()
-    return results
+        pos_score = []
+        dataloader = DataLoader(range(pos_valid_edge.size(0)), args.batch_size)
+        for _, edge_index in enumerate(tqdm.tqdm(dataloader)):
+            pos_edge = pos_train_edge[edge_index]
+            pos_pred = pred(h[pos_edge[:, 0]], h[pos_edge[:, 1]])
+            pos_score.append(pos_pred)
+        pos_score = torch.cat(pos_score, dim=0)
+        train_results = {}
+        for k in [20, 50, 100]:
+            train_results[f'hits@{k}'] = eval_hits(pos_score, neg_score, k)[f'hits@{k}']
+        train_results[args.metric] = evaluator.eval({
+            'y_pred_pos': pos_score,
+            'y_pred_neg': neg_score_multi,
+        })['mrr_list'].mean().item()
+
+    return valid_results, train_results
 
 # Load the dataset
 dataset = DglLinkPropPredDataset(name=args.dataset)
@@ -198,23 +238,32 @@ valid_neg_edge = split_edge['valid']['edge_neg'].to(device)
 test_pos_edge = split_edge['test']['edge'].to(device)
 test_neg_edge = split_edge['test']['edge_neg'].to(device)
 
-embedding = torch.nn.Embedding(graph.num_nodes(), args.emb_hidden).to(device)
-torch.nn.init.orthogonal_(embedding.weight)
-graph.ndata['feat'] = torch.cat((embedding.weight, graph.ndata['feat']), dim=1)
+if args.emb_hidden > 0:
+    embedding = torch.nn.Embedding(graph.num_nodes(), args.emb_hidden).to(device)
+    torch.nn.init.orthogonal_(embedding.weight)
+else:
+    embedding = None
 
 # Create negative samples for training
 neg_sampler = GlobalUniform(args.num_neg)
 
 if args.pred == 'dot':
-    pred = Dot_Predictor().to(device)
+    pred = DotPredictor().to(device)
 elif args.pred == 'mlp':
-    pred = Hadamard_MLPPredictor(args.hidden, args.dropout, args.mlp_layers, args.res).to(device)
+    pred = Hadamard_MLPPredictor(args.hidden, args.dropout, args.mlp_layers, args.res, args.norm, args.scale).to(device)
 else:
     raise NotImplementedError
 
-model = GCN_with_feature(graph.ndata['feat'].shape[1], args.hidden, args.prop_step, args.dropout, args.residual, args.relu, args.conv).to(device)
+input_dim = graph.ndata['feat'].shape[1] + args.emb_hidden
 
-parameter = itertools.chain(model.parameters(), pred.parameters(), embedding.parameters())
+if args.model == 'GCN':
+    model = GCN_with_feature(graph.ndata['feat'].shape[1] + args.emb_hidden, args.hidden, args.norm, args.dp4norm, args.prop_step, args.dropout, args.residual, args.relu, args.linear, args.conv).to(device)
+elif args.model == 'LightGCN':
+    model = LightGCN(graph.ndata['feat'].shape[1] + args.emb_hidden, args.hidden, args.prop_step, args.dropout, args.alpha, args.exp, args.relu, args.norm, args.conv).to(device)
+
+parameter = itertools.chain(model.parameters(), pred.parameters())
+if args.emb_hidden > 0:
+    parameter = itertools.chain(parameter, embedding.parameters())
 optimizer = torch.optim.Adam(parameter, lr=args.lr)
 evaluator = Evaluator(name=args.dataset)
 
@@ -226,34 +275,34 @@ losses = []
 valid_list = []
 test_list = []
 
+if embedding is not None:
+    print(f'number of parameters: {sum(p.numel() for p in model.parameters()) + sum(p.numel() for p in pred.parameters()) + sum(p.numel() for p in embedding.parameters())}')
+else:
+    print(f'number of parameters: {sum(p.numel() for p in model.parameters()) + sum(p.numel() for p in pred.parameters())}')
 
 for epoch in range(args.epochs):
-    loss = train(model, graph, train_pos_edge, optimizer, neg_sampler, pred)
+    loss = train(model, graph, train_pos_edge, optimizer, neg_sampler, pred, embedding)
     losses.append(loss)
     if epoch % args.interval == 0 and args.step_lr_decay:
         adjustlr(optimizer, epoch / args.epochs, args.lr)
-    valid_results = eval(model, graph, valid_pos_edge, valid_neg_edge, evaluator, pred)
+    valid_results, train_results = eval(model, graph, train_pos_edge, valid_pos_edge, valid_neg_edge, evaluator, pred, embedding)
     valid_list.append(valid_results[args.metric])
-
-    test_results = test(model, graph, test_pos_edge, test_neg_edge, evaluator, pred)
+    for k, v in valid_results.items():
+        print(f"Validation {k}: {v:.4f}")
+    for k, v in train_results.items():
+        print(f"Train {k}: {v:.4f}")
+    test_results = test(model, graph, test_pos_edge, test_neg_edge, evaluator, pred, embedding)
     test_list.append(test_results[args.metric])
+    for k, v in test_results.items():
+        print(f"Test {k}: {v:.4f}")
     if valid_results[args.metric] > best_val:
         best_val = valid_results[args.metric]
         best_epoch = epoch
         final_test_result = test_results
     if epoch - best_epoch >= 100:
         break
-    print(f"Epoch {epoch}, Loss: {loss:.4f}, Validation hit: {valid_results[args.metric]:.4f}, Test hit: {test_results[args.metric]:.4f}")
+    print(f"Epoch {epoch}, Loss: {loss:.4f}, Train hit: {train_results[args.metric]:.4f}, Valid hit: {valid_results[args.metric]:.4f}, Test hit: {test_results[args.metric]:.4f}")
+    wandb.log({'loss': loss, 'train_hit': train_results[args.metric], 'valid_hit': valid_results[args.metric], 'test_hit': test_results[args.metric]})
 
 print(f"Test hit: {final_test_result[args.metric]:.4f}")
-
-import matplotlib.pyplot as plt
-
-plt.figure()
-plt.plot(range(len(losses)), losses, label='loss')
-plt.plot(range(len(losses)), valid_list, label='valid')
-plt.plot(range(len(losses)), test_list, label='test')
-plt.xlabel('epoch')
-plt.ylabel('metric')
-plt.legend()
-plt.savefig("plot-" + args.dataset + str(args.gpu) + ".png")
+wandb.log({'best_test': final_test_result[args.metric]})
