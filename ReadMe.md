@@ -1,4 +1,4 @@
-e achieve comparable or better performance than recent models on the OGB benchmark datasets, including ogbl-ddi, ogbl-collab, ogbl-ppa, and ogbl-citation2:
+We achieve comparable or better performance than recent models on the OGB benchmark datasets, including ogbl-ddi, ogbl-collab, ogbl-ppa, and ogbl-citation2:
 
 | Metric        | Cora          | Citeseer      | Pubmed        | Collab        | PPA           | Citation2     | DDI           |
 |---------------|---------------|---------------|---------------|---------------|---------------|---------------|---------------|
