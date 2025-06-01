@@ -20,20 +20,21 @@ The code is based on the DGL library and the OGB library. To run the code, you n
 
 ```conda env create -f env.yaml```
 
-```python train_w_feat_small.py --dataset Cora --lr 0.01 --prop_step 2 --hidden 512 --batch_size 4096 --dropout 0.2 --num_neg 3 --epoch 100 --metric hits@100 --model LightGCN --norm```
+```python train_w_feat_small.py --dataset Cora --activation silu --batch_size 2048 --dropout 0.6 --hidden 1024 --lr 0.005 --maskinput --mlp_layers 4 --res --norm --num_neg 3 --optimizer adamw --prop_step 4 --model LightGCN```
 
-```python train_w_feat_small.py --dataset CiteSeer --lr 0.01 --prop_step 2 --hidden 512 --batch_size 4096 --dropout 0.2 --num_neg 3 --epoch 200 --metric hits@100 --model LightGCN  --norm```
+```python train_w_feat_small.py --dataset CiteSeer --activation relu --batch_size 4096 --dropout 0.6 --hidden 1024 --lr 0.001 --maskinput --norm --prop_step 4 --num_neg 1```
 
-```python train_w_feat_small.py --dataset PubMed --lr 0.005 --prop_step 2 --hidden 512 --batch_size 4096 --dropout 0.2 --num_neg 3 --epoch 100 --metric hits@100 --model LightGCN --mlp_layers 5 --res --norm --exp --alpha 0.5```
+```train_w_feat_small.py --dataset PubMed --activation gelu --batch_size 4096 --dropout 0.4 --exp --hidden 512 --lr 0.001 --maskinput --mlp_layers 2 --norm --num_neg 3 --prop_step 2 --model LightGCN```
 
 Below we give the commands to run the code on the four datasets in the OGB benchmark.
 
 ```python train_wo_feat.py --dataset ogbl-ddi --lr 0.001 --hidden 1024 --batch_size 8192 --dropout 0.6 --num_neg 1 --epochs 500 --prop_step 2 --metric hits@20 --residual 0.1 --maskinput --mlp_layers 8 --mlp_res --emb_dim 1024```
 
-```python collab.py --dataset ogbl-collab --lr 0.0004 --emb_hidden 0 --hidden 1024 --batch_size 16384 --dropout 0.2 --num_neg 3 --epoch 500 --prop_step 4 --metric hits@50 --mlp_layers 5 --res --gpu 1 --norm --dp4norm 0.2 --scale```
+```python collab.py --dataset ogbl-collab --lr 0.0004 --emb_hidden 0 --hidden 1024 --batch_size 16384 --dropout 0.2 --num_neg 3 --epoch 500 --prop_step 4 --metric hits@50 --mlp_layers 5 --res --norm --dp4norm 0.2 --scale```
 
 ```python train_wo_feat.py --dataset ogbl-ppa --lr 0.001 --hidden 512 --batch_size 65536 --dropout 0.2 --num_neg 3 --epoch 800 --prop_step 2 --metric hits@100 --residual 0.1 --mlp_layers 5 --mlp_res --emb_dim 512```
 
-```python citation.py --dataset ogbl-citation2 --lr 0.0003 --clip_norm 1 --emb_hidden 256 --hidden 256 --batch_size 65536 --dropout 0.2 --num_neg 6 --epochs 200 --prop_step 3 --metric MRR --norm --dp4norm 0.2 --mlp_layers 5```
+```python citation.py --dataset ogbl-citation2 --lr 0.0003 --clip_norm 1 --emb_hidden 256 --hidden 256 --batch_size 65536 --dropout 0.2 --num_neg 3 --epochs 200 --prop_step 3 --metric MRR --norm --dp4norm 0.2 --mlp_layers 5```
 
 For ogbl-citation2 dataset, you need a GPU with at least 40GB memory.
+
