@@ -313,6 +313,6 @@ for epoch in range(args.epochs):
     print(f"Epoch {epoch}, Loss: {loss:.4f}, Train hit: {train_results[args.metric]:.4f}, Valid hit: {valid_results[args.metric]:.4f}, Test hit: {test_results[args.metric]:.4f}")
     wandb.log({'loss': loss, 'train_hit': train_results[args.metric], 'valid_hit': valid_results[args.metric], 'test_hit': test_results[args.metric]})
 
-plot_dot_product_dist(graph.ndata['feat'])
+# plot_dot_product_dist(graph.ndata['feat'])
 print(f"Test hit: {final_test_result[args.metric]:.4f}")
 wandb.log({'final_test_hit': final_test_result[args.metric]})
