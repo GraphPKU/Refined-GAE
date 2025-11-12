@@ -1,4 +1,4 @@
-**Update: We are thrilled to announce that our paper, "Reconsidering the Performance of GAE in Link Prediction," has been accepted at the 34th ACM International Conference on Information and Knowledge Management (CIKM 2025)!**
+**Update: We are thrilled to announce that our paper, "Reconsidering the Performance of GAE in Link Prediction," has been selected for the 🏆 Best Full Paper Award 🏆 at the 34th ACM International Conference on Information and Knowledge Management (CIKM 2025)!**
 
 You can read the pre-print on arXiv:
 
