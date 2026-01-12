@@ -40,7 +40,7 @@ Below we give the commands to run the code on the four datasets in the OGB bench
 
 ```python train_wo_feat.py --dataset ogbl-ppa --lr 0.001 --hidden 512 --batch_size 65536 --dropout 0.2 --num_neg 3 --epoch 800 --prop_step 2 --metric hits@100 --residual 0.1 --mlp_layers 5 --mlp_res --emb_dim 512```
 
-```python citation.py --dataset ogbl-citation2 --lr 0.0003 --clip_norm 1 --emb_hidden 256 --hidden 256 --batch_size 65536 --dropout 0.2 --num_neg 3 --epochs 200 --prop_step 3 --metric MRR --norm --dp4norm 0.2 --mlp_layers 5```
+```python citation.py --dataset ogbl-citation2 --lr 0.0005 --clip_norm 1 --emb_hidden 256 --hidden 256 --batch_size 65536 --dropout 0.2 --num_neg 3 --epochs 200 --prop_step 3 --metric MRR --norm --dp4norm 0.2 --mlp_layers 5 --res --maskinput```
 
-For ogbl-citation2 dataset, you need a GPU with at least 40GB memory.
+For ogbl-citation2 dataset, you need a GPU with at least 80GB memory.
 
